@@ -35,7 +35,7 @@ public class KMeans {
         // read pts and write randomly initialized centriods to configuration 
 		int lineNumber = 0;
 		String line = br.readLine(); 
-		
+
 		
         while ( line != null) {
             if (lineNumber + 1 == Integer.MAX_VALUE)
@@ -51,7 +51,6 @@ public class KMeans {
 
 	private static void initializeCentroids(Configuration conf) throws IOException{
 
-		conf.set("fs.hdfs.impl", org.apache.hadoop.hdfs.DistributedFileSystem.class.getName());
 		String uri = conf.get("readInputPath"); 
 		Path path = new Path(uri);
     	FileSystem fs = FileSystem.get(URI.create(uri), conf);
@@ -84,9 +83,11 @@ public class KMeans {
 		int lineNumber = 0;  
 		String line = br.readLine(); 
 		
+		System.out.println("Random initialize at start");
         while ( line != null && index < k) {
 			if (lineNumber == randStart.get(index)){
 				conf.set("centroid." + Integer.toString(index), line); 
+				System.out.println("Choose centriod." + Integer.toString(index) + " at Line: " + lineNumber + ", Loc: "  + line);
 				index += 1;
 			}
             	
@@ -112,12 +113,11 @@ public class KMeans {
 
 	private static void readClusterResults(Configuration conf, int itr) throws IOException{
 		
-        conf.set("fs.hdfs.impl", org.apache.hadoop.hdfs.DistributedFileSystem.class.getName());
-		String uri = conf.get("readOutputPath"); 
-		Path path = new Path(uri);
-    	FileSystem fs = FileSystem.get(URI.create(uri), conf);
+		String outputPath = conf.get("readOutputPath"); 
+		String outputArchivePath = conf.get("archivePath"); 
+		Path path = new Path(outputPath);
+    	FileSystem fs = FileSystem.get(URI.create(outputPath), conf);
 		FileStatus[] status = fs.listStatus(path);	
-		int index = 0; 
 
 		//Move new centriod to old centriod 
 		for (int i = 0; i < newCentroids.length; i++){
@@ -135,18 +135,17 @@ public class KMeans {
 				line = line.replace(","," ");
 				//First index is key, second index is value.x, third is value.y
 				String[] keyValues = line.split("\\s+"); 
+				int index = Integer.parseInt(keyValues[0]); 
 				newCentroids[index].x = Double.parseDouble(keyValues[1]);
 				newCentroids[index].y = Double.parseDouble(keyValues[2]);
 				line = br.readLine(); 
-				index += 1; 
 			}
 			br.close();
         }
 
-		fs.rename(new Path(uri), new Path(uri + "_iteration_" + Integer.toString(itr))); 
+		fs.rename(new Path(outputPath), new Path(outputArchivePath + "_iteration_" + Integer.toString(itr))); 
 
 	}
-
 
 
 
@@ -163,14 +162,18 @@ public class KMeans {
 		final String HDFS_ROOT_URL= args[1];
 		final String inputPath = args[2];
 		final String outputPath = args[3];
+		final String archiveDir = "/kMeanArchive"; 
 		
 		Configuration conf = new Configuration();
 		conf.set("kCentroids", kCentriods); 
 		//read path add <hdfs://localHost:9000> specified by user 
 		conf.set("readInputPath", HDFS_ROOT_URL + inputPath);
 		conf.set("readOutputPath", HDFS_ROOT_URL + outputPath);
+		conf.set("archivePath", HDFS_ROOT_URL + archiveDir + outputPath);
 		conf.set("inputPath", inputPath);
 		conf.set("outputPath", outputPath); 
+		//use hdfs file system instead of local
+		conf.set("fs.hdfs.impl", org.apache.hadoop.hdfs.DistributedFileSystem.class.getName());
 
 
 		//Initialize centriods
@@ -183,15 +186,22 @@ public class KMeans {
 		} 
 
 
+		
+		//setup archive dir
+    	FileSystem fs = FileSystem.get(URI.create(HDFS_ROOT_URL), conf);
+		Path src = new Path(HDFS_ROOT_URL + archiveDir);
+		fs.mkdirs(src);
+
+
 		//initialize centroids and add to config 
 		initializeCentroids(conf);
 
 		Double tolerance = 0.001; 
 		int itr = 0; 
-		final int itrMax = 2; 
+		final int itrMax = 20; 
 		Boolean converged = false; 
 
-		while (itr < itrMax || ! converged) {
+		while (itr < itrMax && !converged) {
 
 			
 			Job job = Job.getInstance(conf, "iter_" + itr);
@@ -210,6 +220,15 @@ public class KMeans {
 
 			readClusterResults(conf, itr); 
 			converged = checkConvergence(tolerance); 
+			//Update centroids passed in the conf
+			
+			for (int i = 0; i < newCentroids.length; i++){
+				conf.unset("centroid." + Integer.toString(i));
+				String newLoc = Double.toString(newCentroids[i].x) + ", " + Double.toString(newCentroids[i].y); 
+				conf.set("centroid." + Integer.toString(i), newLoc);
+			}
+
+
 			itr += 1; 
 
 		}

@@ -30,7 +30,7 @@ public class PointsReducer extends Reducer<Text, Text, Text, Text> {
         }
 
         centriodValue.set(Double.toString(xSum / totalPts) + ", " + Double.toString(ySum / totalPts)); 
-        context.write(centriodText, centriodValue);
+        context.write(key, centriodValue);
 
 
     }
